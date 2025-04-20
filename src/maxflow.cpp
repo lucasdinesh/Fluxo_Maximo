@@ -18,9 +18,14 @@ struct Edge {
     int capacity;
     int flow;
     Edge* reverse;
+
+    Edge(int t, int c) : to(t), capacity(c), flow(0), reverse(nullptr) {}
 };
 
+
 // Structure to represent a graph
+#include <unordered_set> // adicionar no topo
+
 class Graph {
 public:
     int num_vertices;
@@ -30,12 +35,17 @@ public:
     Graph(int n) : num_vertices(n), adj(n) {}
 
     void add_edge(int u, int v, int capacity) {
-        Edge* edge = new Edge{v, capacity, 0, nullptr};
-        Edge* reverse_edge = new Edge{u, 0, 0, edge};
+        Edge* edge = new Edge(v, capacity);
+        Edge* reverse_edge = new Edge(u, 0);  // Aresta residual
         edge->reverse = reverse_edge;
+        reverse_edge->reverse = edge;
+    
         adj[u].push_back(edge);
         adj[v].push_back(reverse_edge);
+    
+        // Mapeia ambas as direções
         edge_map[{u, v}] = edge;
+        edge_map[{v, u}] = reverse_edge;  // ← Adicione esta linha
     }
 
     Edge* find_edge(int u, int v) {
@@ -45,12 +55,31 @@ public:
         }
         return nullptr;
     }
+
+    ~Graph() {
+        // Usamos um set para evitar dupla liberação
+        std::unordered_set<Edge*> deleted_edges;
+        
+        for (int u = 0; u < num_vertices; ++u) {
+            for (Edge* edge : adj[u]) {
+                if (deleted_edges.find(edge) == deleted_edges.end()) {
+                    deleted_edges.insert(edge);
+                    deleted_edges.insert(edge->reverse);
+                    delete edge;
+                    // Não delete edge->reverse aqui! Já foi marcado para deleção
+                }
+            }
+            adj[u].clear();
+        }
+        edge_map.clear();
+    }
 };
+
 
 // Function to read the graph from the file
 Graph* read_graph(const string& filename, int& source, int& sink) {
     ifstream file(filename);
-    if (!file.is_open()) {
+    if (!file) {
         cerr << "Error opening file: " << filename << endl;
         return nullptr;
     }
@@ -58,6 +87,8 @@ Graph* read_graph(const string& filename, int& source, int& sink) {
     string line;
     int num_vertices = 0;
     int num_edges = 0;
+
+    // Primeira passagem: encontrar número de vértices, source e sink
     while (getline(file, line)) {
         stringstream ss(line);
         char type;
@@ -77,9 +108,17 @@ Graph* read_graph(const string& filename, int& source, int& sink) {
         }
     }
 
+    if (source == sink || source < 0 || sink < 0 || source >= num_vertices || sink >= num_vertices) {
+        cerr << "Invalid source/sink nodes: s=" << source << " t=" << sink << " n=" << num_vertices << endl;
+        return nullptr;
+    }
+
+    // Cria o grafo
     Graph* graph = new Graph(num_vertices);
-    file.clear();
-    file.seekg(0);
+
+    // Segunda passagem: adicionar as arestas
+    file.clear();              // limpa estado EOF
+    file.seekg(0);             // volta ao início
 
     while (getline(file, line)) {
         stringstream ss(line);
@@ -238,14 +277,24 @@ int find_bottleneck(Graph* graph, const vector<int>& path, long long& operations
 // Function to update the flow along the path
 void update_flow(Graph* graph, const vector<int>& path, int flow, long long& operations) {
     for (size_t i = 0; i < path.size() - 1; ++i) {
-        Edge* edge = graph->find_edge(path[i], path[i + 1]);
-        operations++; // Edge touched
-        if (edge) {
-            edge->flow += flow;
-            edge->reverse->flow -= flow;
+        int u = path[i];
+        int v = path[i+1];
+        
+        Edge* edge = graph->find_edge(u, v);
+        if (!edge) {
+            cerr << "ERRO CRÍTICO: Aresta " << u << "->" << v << " não encontrada!" << endl;
+            continue;  // Ou use exit(1) para depuração
         }
+
+        edge->flow += flow;
+        if (!edge->reverse) {
+            cerr << "ERRO CRÍTICO: Aresta reversa nula em " << u << "->" << v << endl;
+            continue;
+        }
+        edge->reverse->flow -= flow;
     }
 }
+
 
 // Ford-Fulkerson algorithm
 int ford_fulkerson(Graph* graph, int source, int sink, bool (*find_path)(Graph*, int, int, vector<int>&, long long&), long long& iterations, long long& operations) {
