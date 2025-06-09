@@ -1,0 +1,2 @@
+Compilei com: g++ maxflow_main.cpp -o maxflow -std=c++17
+Executei: ./maxflow instancias/dexpline.gr

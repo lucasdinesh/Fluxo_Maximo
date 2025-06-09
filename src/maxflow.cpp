@@ -219,46 +219,96 @@ bool shortest_path_bfs(Graph* graph, int source, int sink, vector<int>& path, lo
 }
 
 // Function to find a path using randomized DFS
-bool randomized_dfs(Graph* graph, int u, int sink, vector<bool>& visited, vector<int>& path, long long& operations) {
-    visited[u] = true;
-    path.push_back(u);
-    operations++; // Visit node
+#include <stack>
+#include <algorithm>
+#include <memory>
 
-    if (u == sink) {
-        return true;
+struct DFSState {
+    int current;
+    int next_edge;
+    bool visited;
+};
+
+bool ultra_optimized_dfs(Graph* graph, int source, int sink, vector<int>& path, long long& operations) {
+    const int n = graph->num_vertices;
+    if (source == sink) return true;
+
+    // Pré-alocação agressiva (evita todas as alocações durante a execução)
+    static vector<uint8_t> visited_bitmap; // Usa bits para economizar memória
+    static vector<int> parent;
+    static vector<Edge**> shuffled_edges;
+    
+    // Redimensiona apenas quando necessário (amortiza custo)
+    if (visited_bitmap.size() < (n + 7)/8) {
+        visited_bitmap.resize((n + 7)/8, 0);
+        parent.resize(n, -1);
+        shuffled_edges.resize(n, nullptr);
     }
 
-    vector<int> neighbors;
-    for (Edge* edge : graph->adj[u]) {
-        operations++; // Edge touched
-        if (edge->capacity - edge->flow > 0 && !visited[edge->to]) {
-            neighbors.push_back(edge->to);
-        }
-    }
+    // Stack pré-alocado com memória contígua
+    static vector<DFSState> stack;
+    stack.clear();
+    stack.reserve(n);
+    stack.push_back({source, 0, false});
 
-    if (neighbors.empty()) {
-        path.pop_back();
-        return false;
-    }
-
-    random_device rd;
-    mt19937 g(rd());
-    shuffle(neighbors.begin(), neighbors.end(), g);
-
-    for (int v : neighbors) {
-        if (randomized_dfs(graph, v, sink, visited, path, operations)) {
+    // Otimização: desreferenciação direta de ponteiros
+    auto& adj = graph->adj;
+    
+    while (!stack.empty()) {
+        auto& state = stack.back();
+        int u = state.current;
+        
+        if (u == sink) {
+            // Reconstrói o caminho de forma reversa (mais eficiente)
+            path.clear();
+            for (int v = sink; v != -1; v = parent[v]) {
+                path.push_back(v);
+            }
+            reverse(path.begin(), path.end());
             return true;
         }
+
+        if (!state.visited) {
+            // Marca como visitado usando bitmap
+            visited_bitmap[u/8] |= (1 << (u%8));
+            state.visited = true;
+            
+            // Embaralha as arestas apenas na primeira visita
+            if (shuffled_edges[u] == nullptr) {
+                shuffled_edges[u] = new Edge*[adj[u].size()];
+                for (size_t i = 0; i < adj[u].size(); ++i) {
+                    shuffled_edges[u][i] = adj[u][i];
+                }
+                std::shuffle(shuffled_edges[u], shuffled_edges[u] + adj[u].size(), std::mt19937{std::random_device{}()});
+            }
+        }
+
+        // Busca o próximo vizinho válido
+        bool found = false;
+        while (state.next_edge < adj[u].size()) {
+            Edge* edge = shuffled_edges[u][state.next_edge++];
+            int v = edge->to;
+            
+            if (!(visited_bitmap[v/8] & (1 << (v%8))) && (edge->capacity - edge->flow) > 0) {
+                parent[v] = u;
+                stack.push_back({v, 0, false});
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            // Backtracking
+            visited_bitmap[u/8] &= ~(1 << (u%8));
+            if (shuffled_edges[u] != nullptr) {
+                delete[] shuffled_edges[u];
+                shuffled_edges[u] = nullptr;
+            }
+            stack.pop_back();
+        }
     }
 
-    path.pop_back();
     return false;
-}
-
-bool randomized_dfs_wrapper(Graph* graph, int source, int sink, vector<int>& path, long long& operations) {
-    int n = graph->num_vertices;
-    vector<bool> visited(n, false);
-    return randomized_dfs(graph, source, sink, visited, path, operations);
 }
 
 // Function to find the bottleneck capacity
@@ -328,7 +378,7 @@ int main(int argc, char* argv[]) {
     map<string, bool (*)(Graph*, int, int, vector<int>&, long long&)> algorithms = {
         {"fattest", fattest_path},
         {"bfs", shortest_path_bfs},
-        {"dfs", randomized_dfs_wrapper}
+        {"dfs", ultra_optimized_dfs}
     };
 
     for (const auto& pair : algorithms) {
@@ -349,11 +399,11 @@ int main(int argc, char* argv[]) {
         auto start_time = chrono::high_resolution_clock::now();
         int max_flow = ford_fulkerson(graph, source, sink, find_path, iterations, operations);
         auto end_time = chrono::high_resolution_clock::now();
-        auto duration = chrono::duration_cast<chrono::microseconds>(end_time - start_time);
+        auto duration = chrono::duration_cast<chrono::milliseconds>(end_time - start_time);
 
         cout << "Algorithm: " << algorithm_type << endl;
         cout << "Maximum flow: " << max_flow << endl;
-        cout << "Execution time: " << duration.count() << " microseconds" << endl;
+        cout << "Execution time: " << duration.count() << " miliseconds" << endl;
         cout << "Number of iterations: " << iterations << endl;
         cout << "Number of operations: " << operations << endl;
         cout << endl;
